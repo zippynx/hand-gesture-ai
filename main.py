@@ -1,59 +1,45 @@
 import cv2
-import mediapipe as mp
 import math
 import numpy as np
 import time
 
+from hand_tracker import HandTracker
 from volume_controller import volume, volMin, volMax
-
+from brightness_control import set_brightness
+from virtual_mouse import move_mouse, click_mouse
+from gesture_actions import take_screenshot
 
 cap = cv2.VideoCapture(0)
+wCam, hCam = 640, 480
+cap.set(3, wCam)
+cap.set(4, hCam)
 
-mpHands = mp.solutions.hands
-hands = mpHands.Hands()
-
-mpDraw = mp.solutions.drawing_utils
-
+tracker = HandTracker()
 pTime = 0
+mode = "volume" # Mode awal
 
 while True:
     success, img = cap.read()
+    img = cv2.flip(img, 1) 
+    
+    img = tracker.findHands(img)
+    lmList = tracker.findPosition(img)
 
-    imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = hands.process(imgRGB)
-
-    lmList = []
-
-    if results.multi_hand_landmarks:
-        for handLms in results.multi_hand_landmarks:
-
-            mpDraw.draw_landmarks(
-                img,
-                handLms,
-                mpHands.HAND_CONNECTIONS
-            )
-
-            for id, lm in enumerate(handLms.landmark):
-
-                h, w, c = img.shape
-                cx, cy = int(lm.x * w), int(lm.y * h)
-
-                lmList.append((id, cx, cy))
-
-                if id == 4 or id == 8:
-                    cv2.circle(
-                        img,
-                        (cx, cy),
-                        10,
-                        (255, 0, 255),
-                        cv2.FILLED
-                    )
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('v'):
+        mode = "volume"
+    elif key == ord('b'):
+        mode = "brightness"
+    elif key == ord('m'):
+        mode = "mouse"
+    elif key == ord('s'):
+        take_screenshot()
+    elif key == ord('q'):
+        break
 
     if len(lmList) != 0:
-
         x1, y1 = lmList[4][1], lmList[4][2]
         x2, y2 = lmList[8][1], lmList[8][2]
-
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
 
         cv2.line(img, (x1, y1), (x2, y2), (255, 0, 255), 3)
@@ -61,56 +47,34 @@ while True:
 
         length = math.hypot(x2 - x1, y2 - y1)
 
-        # Convert distance to volume
-        vol = np.interp(length, [30, 200], [volMin, volMax])
+        if mode == "volume":
+            vol = np.interp(length, [30, 200], [volMin, volMax])
+            volPer = np.interp(length, [30, 200], [0, 100])
+            volume.SetMasterVolumeLevel(vol, None)
+            cv2.putText(img, f'Vol: {int(volPer)} %', (40, 450), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 0, 0), 3)
 
-        # Volume percentage
-        volPer = np.interp(length, [30, 200], [0, 100])
+        elif mode == "brightness":
+            brightPer = np.interp(length, [30, 200], [0, 100])
+            set_brightness(brightPer)
+            cv2.putText(img, f'Brt: {int(brightPer)} %', (40, 450), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 255), 3)
 
-        # Volume bar
-        volBar = np.interp(length, [30, 200], [400, 150])
+        elif mode == "mouse":
 
-        volume.SetMasterVolumeLevel(vol, None)
+            move_mouse(x2, y2, wCam, hCam)
+            
+            if length < 30:
+                cv2.circle(img, (cx, cy), 10, (0, 255, 0), cv2.FILLED)
+                click_mouse()
+                time.sleep(0.2) 
 
-        # UI Volume Bar
-        cv2.rectangle(img, (50, 150), (85, 400), (255, 0, 0), 3)
+    cv2.putText(img, f'MODE: {mode.upper()}', (40, 100), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 3)
 
-        cv2.rectangle(
-            img,
-            (50, int(volBar)),
-            (85, 400),
-            (255, 0, 0),
-            cv2.FILLED
-        )
-
-        cv2.putText(
-            img,
-            f'{int(volPer)} %',
-            (40, 450),
-            cv2.FONT_HERSHEY_COMPLEX,
-            1,
-            (255, 0, 0),
-            3
-        )
-
-    # FPS
     cTime = time.time()
-
     fps = 1 / (cTime - pTime)
-
     pTime = cTime
+    cv2.putText(img, f'FPS: {int(fps)}', (40, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 3)
 
-    cv2.putText(
-        img,
-        f'FPS: {int(fps)}',
-        (40, 50),
-        cv2.FONT_HERSHEY_COMPLEX,
-        1,
-        (0, 255, 0),
-        3
-    )
+    cv2.imshow("Gesture Control AI", img)
 
-    cv2.imshow("Hand Gesture Volume Control", img)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+cap.release()
+cv2.destroyAllWindows()
